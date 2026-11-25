@@ -1,5 +1,8 @@
 -- Оптом дороже. Version 1. Run once in Supabase SQL Editor.
 begin;
+create table public.od_templates (id boolean primary key default true check(id), tasks jsonb not null);
+alter table public.od_templates enable row level security;
+revoke all on public.od_templates from anon,authenticated;
 create table public.od_games (
  id uuid primary key default gen_random_uuid(), host_hash bytea not null,
  created_at timestamptz not null default now(), title text not null,
@@ -61,7 +64,7 @@ declare g public.od_games; t public.od_teams; p public.od_packets; host boolean:
 begin
  if op='create' then
   secret:=gen_random_uuid()::text||gen_random_uuid()::text;
-  insert into public.od_games(host_hash,title) values(sha256(convert_to(secret,'UTF8')),left(coalesce(nullif(trim(payload->>'title'),''),'Оптом дороже'),100)) returning * into g;
+  insert into public.od_games(host_hash,title,tasks) values(sha256(convert_to(secret,'UTF8')),left(coalesce(nullif(trim(payload->>'title'),''),'Оптом дороже'),100),coalesce((select tasks from public.od_templates where id=true),'[]'::jsonb)) returning * into g;
   return jsonb_build_object('game',g.id,'host',secret);
  end if;
  select * into g from public.od_games where id=game;

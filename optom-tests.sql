@@ -20,6 +20,7 @@ begin
  b:=false;begin perform public.od_api('submit',g,t,jsonb_build_object('id',p,'answers','[{"n":2,"text":"105"}]'::jsonb));exception when others then b:=true;end;assert b,'before start rejected';
  r:=public.od_api('state',g,'');assert not(r?'tasks') and not(r?'packets') and not(r?'links'),'public privacy';
  r:=public.od_api('state',g,t);assert not(r->'tasks'->0?'key'),'team cannot read keys';
+ b:=false;begin perform count(*) from public.od_templates;exception when insufficient_privilege then b:=true;end;assert b,'private template denied';
  b:=false;begin perform public.od_api('start',g,t);exception when others then b:=true;end;assert b,'team cannot start';
  b:=false;begin perform count(*) from public.od_games;exception when insufficient_privilege then b:=true;end;assert b,'direct tables denied';
  r:=public.od_api('start',g,h);assert r->>'start' is not null,'started';
