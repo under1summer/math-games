@@ -4,6 +4,7 @@ create table public.od_templates (id boolean primary key default true check(id),
 alter table public.od_templates enable row level security;
 revoke all on public.od_templates from anon,authenticated;
 create table public.od_games (
+ online boolean not null default true,
  id uuid primary key default gen_random_uuid(), host_hash bytea not null,
  created_at timestamptz not null default now(), title text not null,
  started_at timestamptz, ends_at timestamptz, closed boolean not null default false,
@@ -77,7 +78,10 @@ begin
  if op not in ('state','photo') then
   select * into g from public.od_games where id=g.id for update;
  end if;
- if op='configure' then
+ if op='delivery' then
+  if not host or g.started_at is not null or jsonb_typeof(payload->'online') is distinct from 'boolean' then raise exception 'Режим выбирается ведущим до старта';end if;
+  update public.od_games set online=(payload->>'online')::boolean where id=g.id;
+ elsif op='configure' then
   if not host then raise exception 'Нет доступа ведущего'; end if;
   if g.started_at is not null then raise exception 'После старта команды менять нельзя'; end if;
   names:=payload->'names';
@@ -113,6 +117,8 @@ begin
   if not host then raise exception 'Нет доступа ведущего'; end if;
   update public.od_games set closed=true where id=g.id;
  elsif op='submit' then
+  if host and not g.online then select * into t from public.od_teams where id=(payload->>'team')::uuid and game_id=g.id;
+  elsif not g.online then raise exception 'Игра в аудитории: сдайте ответ на листочке ведущему';end if;
   if t.id is null then raise exception 'Нужна ссылка команды'; end if;
   pid:=(payload->>'id')::uuid;
   select * into p from public.od_packets where id=pid;
@@ -169,7 +175,7 @@ begin
    'pending',count(q.id) filter(where public.od_score(q.answers) is null)) x
   from public.od_teams tm left join public.od_packets q on q.team_id=tm.id where tm.game_id=g.id group by tm.id
  ) z;
- result:=jsonb_build_object('game',g.id,'title',g.title,'start',g.started_at,'end',g.ends_at,'closed',g.closed,'now',clock_timestamp(),'teams',ts);
+ result:=jsonb_build_object('game',g.id,'title',g.title,'online',g.online,'start',g.started_at,'end',g.ends_at,'closed',g.closed,'now',clock_timestamp(),'teams',ts);
  if host or t.id is not null then
   select coalesce(jsonb_agg(jsonb_build_object('id',q.id,'team',q.team_id,'time',q.created_at,'answers',q.answers,'photo',q.image<>'','score',public.od_score(q.answers)) order by q.created_at),'[]') into ps from public.od_packets q where q.game_id=g.id and (host or q.team_id=t.id);
   result:=result||jsonb_build_object('packets',ps,'tasks',(select jsonb_agg(case when host then x else x-'key'-'mode' end order by (x->>'n')::int) from jsonb_array_elements(g.tasks) x));

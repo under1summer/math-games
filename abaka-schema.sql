@@ -1,6 +1,7 @@
 -- Mathematical Abaka, standalone additive migration. No od_* objects are changed.
 begin;
 create table public.ab_games (
+ online boolean not null default true,
  id uuid primary key default gen_random_uuid(), host_hash bytea not null, title text not null,
  created_at timestamptz not null default now(), themes int not null default 5 check(themes between 1 and 12),
  tasks_per_theme int not null default 5 check(tasks_per_theme between 1 and 12),
@@ -128,8 +129,11 @@ begin
   if not found then raise exception 'Ссылка команды недействительна'; end if;
  end if;
  if op not in ('state','picture') then select * into g from public.ab_games where id=g.id for update; end if;
- if op in ('configure','tasks','start','close','new','review','export') and not host then raise exception 'Нет доступа ведущего'; end if;
- if op='configure' then
+ if op in ('configure','tasks','start','close','new','review','export','delivery') and not host then raise exception 'Нет доступа ведущего'; end if;
+ if op='delivery' then
+  if not host or g.start_ms is not null or jsonb_typeof(payload->'online') is distinct from 'boolean' then raise exception 'Режим выбирается ведущим до старта';end if;
+  update public.ab_games set online=(payload->>'online')::boolean where id=g.id;
+ elsif op='configure' then
   if g.start_ms is not null then raise exception 'Настройки меняются только до старта'; end if;
   nt:=(payload->>'themes')::int;nn:=(payload->>'tasks')::int;mins:=(payload->>'minutes')::int;names:=payload->'names';
   if nt is null or nt not between 1 and 12 or nn is null or nn not between 1 and 12 or mins is null or mins not between 1 and 300 then raise exception 'Тем: 1–12, задач в теме: 1–12, время: 1–300 минут'; end if;
@@ -176,12 +180,14 @@ begin
  elsif op='new' then
   if g.start_ms is not null and not g.closed and received<g.end_ms then raise exception 'Сначала завершите текущую игру'; end if;
   secret:=gen_random_uuid()::text||gen_random_uuid()::text;
-  insert into public.ab_games(host_hash,title,themes,tasks_per_theme,minutes) values(sha256(convert_to(secret,'UTF8')),g.title,g.themes,g.tasks_per_theme,g.minutes) returning id into gid;
+  insert into public.ab_games(host_hash,title,themes,tasks_per_theme,minutes,online) values(sha256(convert_to(secret,'UTF8')),g.title,g.themes,g.tasks_per_theme,g.minutes,g.online) returning id into gid;
   insert into public.ab_teams(game_id,position,name,token) select gid,position,name,gen_random_uuid()::text||gen_random_uuid()::text from public.ab_teams where game_id=g.id;
   insert into public.ab_tasks select gid,theme,n,topic,text,mode,key,bank_task_id,bank_version,kind,module_id,module_version,module_config from public.ab_tasks where game_id=g.id;
   insert into public.ab_events(game_id,action,data) values(gid,'copy',jsonb_build_object('source',g.id));
   return jsonb_build_object('id',gid,'hostToken',secret);
  elsif op='submit' then
+  if host and not g.online then select * into team from public.ab_teams where id=(payload->>'team')::uuid and game_id=g.id;
+  elsif not g.online then raise exception 'Игра в аудитории: сдайте ответ на листочке ведущему';end if;
   if team.id is null then raise exception 'Нужна ссылка команды'; end if;
   pid:=(payload->>'id')::uuid;
   select * into rec from public.ab_submissions where id=pid;
@@ -233,7 +239,7 @@ begin
   'events',(select coalesce(jsonb_agg(to_jsonb(e) order by id),'[]') from public.ab_events e where game_id=g.id));
  elsif op<>'state' or op is null then raise exception 'Неизвестное действие'; end if;
  select * into g from public.ab_games where id=g.id;
- r:=public.ab_calculate(g.id)||jsonb_build_object('id',g.id,'title',g.title,'now',floor(extract(epoch from clock_timestamp())*1000),
+ r:=public.ab_calculate(g.id)||jsonb_build_object('id',g.id,'title',g.title,'online',g.online,'now',floor(extract(epoch from clock_timestamp())*1000),
  'start',coalesce(g.start_ms,0),'end',coalesce(g.end_ms,0),'closed',g.closed,'themes',g.themes,'tasksPerTheme',g.tasks_per_theme,'minutes',g.minutes);
  if host or team.id is not null then
   if g.start_ms is null then
