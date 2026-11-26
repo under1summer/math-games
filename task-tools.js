@@ -2,7 +2,7 @@
 'use strict';
 window.TaskTools={
  async excel(){if(window.XLSX)return window.XLSX;if(!this.loading)this.loading=new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='./xlsx.full.min.js';s.onload=()=>resolve(window.XLSX);s.onerror=()=>{this.loading=null;reject(Error('Не удалось загрузить чтение Excel. Обновите страницу.'))};document.head.append(s)});return this.loading},
- mount(parent,adapter){
+ mount(parent,adapter){if(window.TaskManager)return;
   if(parent.querySelector('[data-task-tools]'))return;
   const box=document.createElement('div');box.dataset.taskTools='';box.innerHTML='<p>Добавить задачи: вручную в редакторе ниже, из Excel или из будущего банка.</p><div class="row bar"><label>Файл задач .xls / .xlsx <input data-file type="file" accept=".xls,.xlsx"></label><button type="button" data-template>Скачать шаблон Excel</button><button type="button" disabled title="Банк задач пока не создан">Из банка — позже</button></div><p>Столбцы: Код, Условие, Режим, Ответ. Можно загрузить часть задач. Режимы: Число, Текст, Набор чисел, Вручную. Альтернативные ответы — через |. После переноса проверьте редактор и нажмите «Сохранить задачи».</p><div data-preview hidden><label>Лист Excel <select data-sheet></select></label><p data-result></p><pre data-sample style="white-space:pre-wrap;max-height:220px;overflow:auto"></pre><button type="button" data-apply>Перенести в редактор</button><button type="button" data-cancel>Отмена импорта</button></div><p data-message role="status"></p>';
   parent.prepend(box);const $=s=>box.querySelector(s),message=t=>$('[data-message]').textContent=t;
