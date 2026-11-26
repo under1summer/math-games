@@ -125,6 +125,10 @@ if exists(select 1 from public.ng_leases where game_id=game and(code=sub.code an
 if st='cancelled'and exists(select 1 from public.ng_submissions where game_id=game and team_id=sub.team_id and code=sub.code and status<>'cancelled'and seq>sub.seq)then raise exception 'Сначала верните последнюю попытку по этой карточке';end if;insert into public.ng_leases values(game,sub.code,sub.team_id)on conflict do nothing;end if;
 update public.ng_submissions set status=st,note=reason where id=sub.id;if st<>'cancelled'then perform public.ng_issue(game,sub.team_id,sub.code,st);end if;
 else raise exception 'Неизвестное действие';end if;
+-- A jury return/correction may reopen an automatically finished game while time remains.
+-- Explicit host finishes and expired timers always remain closed.
+if op in('review','return')and gg.closed and gg.ends_at>clock_timestamp()and not exists(select 1 from public.ng_events where game_id=game and action='finish')and exists(select 1 from public.ng_teams t where t.game_id=game and not(public.ng_board(game,t.id)->>'finished')::boolean)then
+update public.ng_games set closed=false where id=game;update public.ng_lifecycle set finished_at=null where game_id=game;end if;
 if gg.kind<>'p52'and gg.started_at is not null and not gg.closed and not exists(select 1 from public.ng_teams t where t.game_id=game and not(public.ng_board(game,t.id)->>'finished')::boolean)then update public.ng_games set closed=true where id=game;end if;
 insert into public.ng_events(game_id,action,data)values(game,op,case when op in('submit','review','return')then jsonb_build_object('id',pid,'submission',sub.id,'status',st)else '{}'end);
 update public.ng_lifecycle set activity_at=now()where game_kind=gg.kind and game_id=game;

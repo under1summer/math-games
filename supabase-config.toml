@@ -1,2 +1,5 @@
 [functions.game-files]
 verify_jwt = true
+
+[functions.new-game-files]
+verify_jwt = true
