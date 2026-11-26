@@ -7,14 +7,19 @@ revoke all on public.mg_game_templates,public.mg_template_runs from anon,authent
 create or replace function public.mg_bank_batch(rows jsonb)returns jsonb language plpgsql security definer set search_path=''as $$declare row jsonb;result jsonb:='[]';begin
 if auth.uid()is null then raise exception 'Войдите в банк задач';end if;if jsonb_typeof(rows)is distinct from 'array'or jsonb_array_length(rows)not between 1 and 1000 then raise exception 'Нужно от 1 до 1000 задач';end if;
 for row in select *from jsonb_array_elements(rows)loop result:=result||jsonb_build_array(public.mg_bank('save',jsonb_build_object('id',row->>'id','content',row->'content')));end loop;return result;end $$;
+-- Count filled tasks, not just the slots in the game field. Private helper: no answers in summaries.
+create or replace function public.mg_task_status(rows jsonb)returns jsonb language sql immutable set search_path=''as $$
+with slots as(select x->>'code'code,nullif(trim(x->'content'->>'condition'),'')is not null filled,(x->'content'->>'kind'='cutting'or x->'content'->>'mode'='manual'or nullif(trim(x->'content'->>'key'),'')is not null)has_key from jsonb_array_elements(coalesce(rows,'[]'))x)
+select jsonb_build_object('total',count(*),'filled',count(*)filter(where filled),'ready',count(*)filter(where filled and has_key),'missing',coalesce(jsonb_agg(jsonb_build_object('code',code,'reason',case when not filled then 'Нет условия'else 'Нет ключа проверки'end))filter(where not filled or not coalesce(has_key,false)),'[]'))from slots $$;
+revoke all on function public.mg_task_status(jsonb)from public,anon,authenticated;
 create or replace function public.mg_templates(op text,payload jsonb default '{}')returns jsonb language plpgsql security definer set search_path=''as $$
 #variable_conflict use_column
 declare u uuid:=auth.uid();tmpl public.mg_game_templates;run public.mg_template_runs;tid uuid:=(payload->>'id')::uuid;gid uuid;host text;k text;v_title text;v_settings jsonb;rows jsonb;created jsonb;s jsonb;names jsonb;req uuid;begin
 if u is null then raise exception 'Войдите в личные сценарии игр';end if;
-if op='list'then return coalesce((select jsonb_agg(to_jsonb(x))from(select id,title,game_kind,settings,updated_at,jsonb_array_length(tasks)task_count from public.mg_game_templates where owner_id=u order by updated_at desc limit 100)x),'[]');end if;
+if op='list'then return coalesce((select jsonb_agg(to_jsonb(x))from(select id,title,game_kind,settings,updated_at,jsonb_array_length(tasks)task_count,public.mg_task_status(tasks)task_status from public.mg_game_templates where owner_id=u order by updated_at desc limit 100)x),'[]');end if;
 if op='recent'then return coalesce((select jsonb_agg(to_jsonb(x))from(select game_kind,game_id,host_token,template_id,created_at from public.mg_template_runs where owner_id=u order by created_at desc limit 20)x),'[]');end if;
 if tid is not null then select *into tmpl from public.mg_game_templates where id=tid and owner_id=u for update;if not found then raise exception 'Сценарий недоступен';end if;end if;
-if op='get'then if tid is null then raise exception 'Выберите сценарий';end if;return to_jsonb(tmpl)-'owner_id';end if;
+if op='get'then if tid is null then raise exception 'Выберите сценарий';end if;return(to_jsonb(tmpl)-'owner_id')||jsonb_build_object('task_status',public.mg_task_status(tmpl.tasks));end if;
 if op='delete'then if tid is null then raise exception 'Выберите сценарий';end if;delete from public.mg_game_templates where id=tid;return '{}';end if;
 if op='rename'then v_title:=trim(payload->>'title');if tid is null or v_title is null or length(v_title)not between 1 and 100 then raise exception 'Название: до 100 символов';end if;update public.mg_game_templates set title=v_title,updated_at=now()where id=tid;return jsonb_build_object('id',tid);end if;
 if op='save'then
@@ -26,7 +31,7 @@ case k when 'od'then select jsonb_build_object('title',g.title,'online',g.online
 when 'ab'then select jsonb_build_object('title',g.title,'online',g.online,'themes',g.themes,'tasks',g.tasks_per_theme,'minutes',g.minutes,'names',(select jsonb_agg(name order by position)from public.ab_teams where game_id=gid))into v_settings from public.ab_games g where id=gid;
 when 'ps'then select jsonb_build_object('title',g.title,'online',g.online,'rounds',g.rounds,'interval',g.interval_min,'names',(select jsonb_agg(name order by position)from public.ps_teams where game_id=gid))into v_settings from public.ps_games g where id=gid;
 else select jsonb_build_object('title',w.title)into v_settings from public.mg_workbenches w where id=gid;end case;
-if tid is null then insert into public.mg_game_templates(owner_id,title,game_kind,settings,tasks)values(u,v_title,k,v_settings,rows)returning id into tid;else update public.mg_game_templates set title=v_title,game_kind=k,settings=v_settings,tasks=rows,updated_at=now()where id=tid;end if;return jsonb_build_object('id',tid);
+if tid is null then insert into public.mg_game_templates(owner_id,title,game_kind,settings,tasks)values(u,v_title,k,v_settings,rows)returning id into tid;else update public.mg_game_templates set title=v_title,game_kind=k,settings=v_settings,tasks=rows,updated_at=now()where id=tid;end if;return jsonb_build_object('id',tid,'task_status',public.mg_task_status(rows));
 end if;
 if op='launch'then
 if tid is null then raise exception 'Выберите сценарий';end if;req:=(payload->>'request')::uuid;if req is null then raise exception 'Нужен идентификатор запуска';end if;
