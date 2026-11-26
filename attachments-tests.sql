@@ -9,8 +9,8 @@ begin perform public.mg_files_access('get','ps',g,tt2,jsonb_build_object('id',fi
 sid:=gen_random_uuid();s:=public.ps_api('submit',g,tt,jsonb_build_object('id',sid,'task','m:1','answer','','files',jsonb_build_array(fid)));assert s->'submissions'->0->>'status'='PENDING';assert(select answer_id=sid from public.mg_files where id=fid);
 r:=public.mg_files_access('get','ps',g,h,jsonb_build_object('id',fid));assert r->>'name'='x.pdf';
 begin perform public.mg_files_access('discard','ps',g,tt,jsonb_build_object('id',fid));raise check_violation;exception when raise_exception then null;end;
-perform public.ps_api('finish',g,h);update public.mg_lifecycle set finished_at=now()-interval '8 days'where game_kind='ps'and game_id=g;perform public.mg_cleanup();assert(select expires_at is not null from public.mg_files where id=fid);
-select cleanup_token into secret from public.mg_file_config where id=true;r:=public.mg_files_access('cleanup','',null,secret);assert exists(select 1 from jsonb_array_elements(r)x where x->>'id'=fid::text);
+perform public.ps_api('finish',g,h);update public.mg_lifecycle set protected=true,finished_at=now()-interval '8 days'where game_kind='ps'and game_id=g;perform public.mg_cleanup();assert exists(select 1 from public.ps_submissions where id=sid);
+select cleanup_token into secret from public.mg_file_config where id=true;r:=public.mg_files_access('cleanup','',null,secret);assert exists(select 1 from jsonb_array_elements(r)x where x->>'id'=fid::text);assert(select expires_at is not null from public.mg_files where id=fid);
 assert not has_function_privilege('anon','public.mg_files_access(text,text,uuid,text,jsonb)','EXECUTE');assert not has_table_privilege('authenticated','public.mg_files','SELECT');assert(select public=false from storage.buckets where id='game-solutions');
 end $$;
 select 'PASS: file policy, file-only answer, ownership, immutable bound files, expiry queue, private bucket' as result;

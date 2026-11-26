@@ -11,7 +11,10 @@ create or replace function public.mg_files_access(op text,k text default '',g uu
 #variable_conflict use_column
 declare host boolean;team uuid;row public.mg_files;fid uuid;task jsonb;requested_code text:=p->>'code';online boolean;ended boolean;secret text;begin
 if op in('cleanup','purged')then select cleanup_token into secret from public.mg_file_config where id=true;if t is distinct from secret then raise exception 'Нет доступа';end if;
-if op='cleanup'then return coalesce((select jsonb_agg(to_jsonb(x))from(select id,path from public.mg_files where expires_at<=now()or(answer_id is null and created_at<now()-interval '1 day')order by created_at limit 100)x),'[]');end if;
+if op='cleanup'then
+-- New Storage files expire even when a legacy game's earlier database records are protected.
+update public.mg_files f set expires_at=now()where f.expires_at is null and public.mg_finished(f.game_kind,f.game_id)<=now()-interval '7 days';
+return coalesce((select jsonb_agg(to_jsonb(x))from(select id,path from public.mg_files where expires_at<=now()or(answer_id is null and created_at<now()-interval '1 day')order by created_at limit 1000)x),'[]');end if;
 delete from public.mg_files where id in(select value::text::uuid from jsonb_array_elements_text(p->'ids'));return '{}';end if;
 host:=public.mg_host(k,g,t);
 case k when 'od'then select id into team from public.od_teams where game_id=g and token=t;select online,closed or started_at is null or ends_at<=now()into online,ended from public.od_games where id=g;
