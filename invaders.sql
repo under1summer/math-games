@@ -60,6 +60,12 @@ if op='state'then return public.iv_state(game,token);end if;
 select *into strict gg from public.ng_games where id=game and kind='iv'for update;host:=public.ng_host('iv',game,token);select *into tm from public.ng_teams where game_id=game and ng_teams.token=iv_api.token;
 if not host and tm.id is null then raise exception 'Нет доступа';end if;
 if exists(select 1 from public.ng_lifecycle where game_id=game and archived)then raise exception 'Подробные данные уже очищены';end if;
+if op='delivery'then
+if not host or gg.started_at is not null or jsonb_typeof(payload->'online')is distinct from 'boolean' then raise exception 'Режим выбирается ведущим до старта';end if;
+update public.ng_games set online=(payload->>'online')::boolean where id=game;
+insert into public.ng_events(game_id,action,data)values(game,'delivery',jsonb_build_object('online',payload->'online'));
+return public.iv_state(game,token);
+end if;
 if op in('paint','place_start')then
 if not host or gg.started_at is not null then raise exception 'Поле меняет ведущий до старта';end if;xx:=(payload->>'x')::int;yy:=(payload->>'y')::int;select *into cell from public.iv_cells where game_id=game and x=xx and y=yy;if not found then raise exception 'Нет клетки';end if;
 if op='paint'then v:=(payload->>'price')::int;if v is null or v not between 1 and 15 then raise exception 'Стоимость клетки: 1–15';end if;update public.iv_cells set price=v,version=version+1 where game_id=game and x=xx and y=yy;
@@ -131,7 +137,7 @@ select *into gg from public.ng_games where id=game for update;host:=public.ng_ho
 if exists(select 1 from public.ng_lifecycle where game_kind=gg.kind and game_id=game and archived)then raise exception 'Подробные данные игры уже очищены';end if;
 if op in('start','finish','review','return')and not host then raise exception 'Нужна ссылка ведущего';end if;
 if op='start'then
-if gg.started_at is not null then raise exception 'Игра уже запускалась';end if;if exists(select 1 from public.ng_slots s left join public.mg_task_copies c on c.game_kind=gg.kind and c.game_id=game and c.code=s.code where s.game_id=game and(nullif(trim(c.content->>'condition'),'')is null or(c.content->>'kind'<>'cutting'and c.content->>'mode'<>'manual'and nullif(trim(c.content->>'key'),'')is null)))then raise exception 'Заполните и сохраните все условия и ключи';end if;
+if gg.started_at is not null then raise exception 'Игра уже запускалась';end if;if gg.online and exists(select 1 from public.ng_slots s left join public.mg_task_copies c on c.game_kind=gg.kind and c.game_id=game and c.code=s.code where s.game_id=game and(nullif(trim(c.content->>'condition'),'')is null or(c.content->>'kind'<>'cutting'and c.content->>'mode'<>'manual'and nullif(trim(c.content->>'key'),'')is null)))then raise exception 'Заполните и сохраните все условия и ключи';end if;
 update public.ng_games set started_at=clock_timestamp(),ends_at=clock_timestamp()+make_interval(mins=>gg.minutes)where id=game;
 insert into public.ng_issued select game,t.id,s.code from public.ng_teams t cross join public.ng_slots s where t.game_id=game and s.game_id=game and(gg.kind in('p52','xo','iv')or gg.kind='maze'and s.position=1 or gg.kind='bonus'and s.position in(1,9,17))on conflict do nothing;
 elsif op='finish'then if gg.started_at is null then raise exception 'Игра ещё не началась';end if;update public.ng_games set closed=true where id=game;

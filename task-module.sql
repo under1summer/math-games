@@ -298,7 +298,7 @@ begin
  elsif op='start' then
   if g.start_ms is not null then raise exception 'Игра уже запускалась'; end if;
   select jsonb_agg(to_jsonb(t)-'game_id' order by theme,n) into snapshot from public.ab_tasks t where game_id=g.id and theme<=g.themes and n<=g.tasks_per_theme;
-  if snapshot is null or jsonb_array_length(snapshot)<>g.themes*g.tasks_per_theme or exists(select 1 from jsonb_array_elements(snapshot) t where nullif(trim(t->>'text'),'') is null or (t->>'mode'<>'Вручную' and nullif(trim(t->>'key'),'') is null)) then raise exception 'Заполните и сохраните все условия и ключи'; end if;
+  if g.online and (snapshot is null or jsonb_array_length(snapshot)<>g.themes*g.tasks_per_theme or exists(select 1 from jsonb_array_elements(snapshot) t where nullif(trim(t->>'text'),'') is null or (t->>'mode'<>'Вручную' and nullif(trim(t->>'key'),'') is null))) then raise exception 'Заполните и сохраните все условия и ключи'; end if;
   update public.ab_games set start_ms=received,end_ms=received+minutes*60000,closed=false,frozen_tasks=snapshot where id=g.id;
   insert into public.ab_events(game_id,action) values(g.id,'start');
  elsif op='close' then
